@@ -16,6 +16,7 @@ import logging
 import time
 import re
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 import os
 
 
@@ -87,6 +88,7 @@ def run_google_patents_scraper(query, max_results=2):
 
     log("[INFO] Starting Google Patents scraper...")
     from selenium.webdriver.chrome.service import Service
+    options = webdriver.ChromeOptions()
 
     options.binary_location = os.getenv("CHROME_BIN", "/usr/bin/chromium")  # ✅ Chromium yolu
     options.add_argument("--headless=new")
