@@ -69,7 +69,8 @@ def run_google_patents_scraper(query, max_results=5):
 
     results = []
     try:
-        search_url = f"https://patents.google.com/?q={quote_plus(query)}&tbm=pts"
+        # ✅ sadece q parametresi bırak
+        search_url = f"https://patents.google.com/?q={quote_plus(query)}"
         log(f"[HTTP] Search: {search_url}")
         r = httpx.get(search_url, headers=UA, timeout=60)
         if r.status_code != 200:
@@ -79,6 +80,7 @@ def run_google_patents_scraper(query, max_results=5):
         sel = Selector(r.text)
         articles = sel.css("article.result.style-scope.search-result-item")
         log(f"[HTTP] Found {len(articles)} articles")
+
         for a in articles[:max_results]:
             href = a.css("a#link::attr(href)").get("") or ""
             title = (a.css("a#link::text").get("") or "").strip()
@@ -142,13 +144,14 @@ def run_google_patents_scraper(query, max_results=5):
                 "citations": citations,
                 "date_published": date_published,
             })
-            time.sleep(0.6)  # polite delay
+            time.sleep(0.6)
 
     finally:
         pd.DataFrame(log_rows).to_excel("patent_scraper_log.xlsx", index=False)
         log("[INFO] Log file saved to patent_scraper_log.xlsx")
 
     return results
+
 
 # === Endpoint ===
 @app.post("/get_patents_detailed", response_model=PatentDetailedResponse)
