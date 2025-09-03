@@ -96,7 +96,8 @@ def run_google_patents_scraper(query, max_results=2):
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--remote-debugging-port=9222")
 
-    driver = webdriver.Chrome(options=options)
+    chrome_service = Service("/usr/local/bin/chromedriver")
+    driver = webdriver.Chrome(service=chrome_service, options=options)
 
     wait = WebDriverWait(driver, 10)
 
