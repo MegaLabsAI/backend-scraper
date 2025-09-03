@@ -67,3 +67,7 @@ WORKDIR /app
 # 7. Başlatma komutu
 # ========================
 CMD ["uvicorn", "google_patent_scraper:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Chrome ve Selenium için zorunlu flagler
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
