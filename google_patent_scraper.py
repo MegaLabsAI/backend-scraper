@@ -88,11 +88,17 @@ def run_google_patents_scraper(query, max_results=2):
     log("[INFO] Starting Google Patents scraper...")
 
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")
+    options.add_argument("--headless=new")   # ✅ yeni headless
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
     options.add_argument("--remote-debugging-port=9222")
+
+    driver = webdriver.Chrome(
+        executable_path="/usr/local/bin/chromedriver",  # ✅ garanti yol
+        options=options
+    )
 
     driver = webdriver.Chrome(options=options)
 

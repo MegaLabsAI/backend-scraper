@@ -49,6 +49,9 @@ RUN CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f3 | cut -d '.' -f1) 
 # 4. Ortam ayarları
 # ========================
 ENV DISPLAY=:99
+# Chrome ve Selenium için zorunlu flagler
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 
 # ========================
 # 5. Python bağımlılıkları
