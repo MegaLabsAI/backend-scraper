@@ -37,30 +37,32 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add
     > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update && apt-get install -y google-chrome-stable
 
-# ✅ Symlink: selenium /usr/bin/google-chrome aradığı için
-RUN ln -s /usr/bin/google-chrome-stable /usr/bin/google-chrome
+# ✅ Symlink düzeltmeleri
+RUN ln -sf /usr/bin/google-chrome-stable /usr/bin/google-chrome
 
 # ========================
-# 3. ChromeDriver yükle (Chrome versiyonuna uygun)
+# 3. ChromeDriver yükle
 # ========================
-RUN CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f3 | cut -d '.' -f1) && \
+RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f1) && \
     DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
     wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${DRIVER_VERSION}/chromedriver_linux64.zip" && \
-    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip && \
+    chmod +x /usr/local/bin/chromedriver && \
+    ln -sf /usr/local/bin/chromedriver /usr/bin/chromedriver
 
 # ========================
 # 4. Ortam ayarları
 # ========================
 ENV DISPLAY=:99
 ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 # ========================
 # 5. Python bağımlılıkları
 # ========================
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install openpyxl  # ✅ pandas.to_excel için gerekli
+    && pip install openpyxl
 
 # ========================
 # 6. Kodları kopyala
