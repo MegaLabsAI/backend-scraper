@@ -88,7 +88,7 @@ def run_google_patents_scraper(query, max_results=2):
     from selenium.webdriver.chrome.service import Service
 
     options = webdriver.ChromeOptions()
-    options.binary_location = "/usr/bin/google-chrome"   # ✅ garanti chrome path
+    options.binary_location = os.getenv("CHROME_BIN", "/usr/bin/google-chrome-stable")
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -96,7 +96,8 @@ def run_google_patents_scraper(query, max_results=2):
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--remote-debugging-port=9222")
 
-    driver = webdriver.Chrome(options=options)
+    chrome_service = Service(os.getenv("CHROMEDRIVER_PATH", "/usr/local/bin/chromedriver"))
+    driver = webdriver.Chrome(service=chrome_service, options=options)
     wait = WebDriverWait(driver, 10)
 
     try:
