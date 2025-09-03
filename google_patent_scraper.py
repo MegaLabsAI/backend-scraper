@@ -75,7 +75,7 @@ def extract_patent_id(article, href, abstract):
 
 
 # patent scraped
-def run_google_patents_scraper(query, max_results=5):
+def run_google_patents_scraper(query, max_results=2):
     
     log_rows = []  # <---- store logs here!
 
@@ -85,10 +85,15 @@ def run_google_patents_scraper(query, max_results=5):
 
     log("[INFO] Starting Google Patents scraper...")
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")   # ✅ yeni headless
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(options=options)
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--remote-debugging-port=9222")
+
+    chrome_service = Service("/usr/local/bin/chromedriver")  # ✅ garanti yol
+    driver = webdriver.Chrome(service=chrome_service, options=options)
     wait = WebDriverWait(driver, 10)
 
     try:
@@ -400,7 +405,7 @@ async def get_patents_detailed(request: PatentRequest):
         ThreadPoolExecutor(max_workers=1),
         run_google_patents_scraper,
         request.description,  # query
-        5                     # max_results
+        2                     # max_results
     )
 
     # ✅ Store scraped results in memory by session_id
