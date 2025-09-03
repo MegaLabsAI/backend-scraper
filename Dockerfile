@@ -1,9 +1,6 @@
-# ✅ Python 3.11 slim image
 FROM python:3.11-slim
 
-# ========================
-# 1. Sistem bağımlılıkları
-# ========================
+# Sistem bağımlılıkları
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -27,48 +24,34 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libatk1.0-0 \
     libcups2 \
-    chromium-driver \   # ✅ Bunu ekledik
     && rm -rf /var/lib/apt/lists/*
 
-# ========================
-# 2. Google Chrome yükle
-# ========================
+# Google Chrome yükle
 RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
     && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
     > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update && apt-get install -y google-chrome-stable
 
-# (Opsiyonel) Eğer yukarıdaki ChromeDriver indirmen kalsın dersen bırakabilirsin,
-# ama chromium-driver zaten eklediğimiz için garanti olur. İstersen bu kısmı silebilirsin.
-# ========================
-# 3. ChromeDriver (ekstra güvence için)
-# ========================
-RUN CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f3 | cut -d '.' -f1) && \
+# Chrome versiyonunu öğren, ona uygun chromedriver indir
+RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f1) && \
     DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
     wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${DRIVER_VERSION}/chromedriver_linux64.zip" && \
-    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip || true
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip && \
+    chmod +x /usr/local/bin/chromedriver
 
-# ========================
-# 4. Ortam ayarları
-# ========================
-ENV DISPLAY=:99
+# Ortam değişkenleri
 ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver   # ✅ chromium-driver ile garanti path
+ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+ENV DISPLAY=:99
 
-# ========================
-# 5. Python bağımlılıkları
-# ========================
+# Python bağımlılıkları
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install openpyxl  # ✅ pandas.to_excel için gerekli
+    && pip install openpyxl
 
-# ========================
-# 6. Kodları kopyala
-# ========================
+# Kodları kopyala
 COPY . /app
 WORKDIR /app
 
-# ========================
-# 7. Başlatma komutu
-# ========================
+# Başlat
 CMD ["uvicorn", "google_patent_scraper:app", "--host", "0.0.0.0", "--port", "8000"]
