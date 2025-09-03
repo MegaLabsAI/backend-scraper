@@ -4,18 +4,16 @@ from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from parsel import Selector
-import re
-import pandas as pd
-import asyncio
+import re, time, asyncio, logging
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote_plus, urljoin
-import logging, time
+import pandas as pd
 
 app = FastAPI()
 logger = logging.getLogger("google_patent_scraper")
 logging.basicConfig(level=logging.INFO)
 
-# CORS serbest
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -61,47 +59,67 @@ UA = {
 def _txts(nodes):
     return " ".join([re.sub(r"\s+", " ", x).strip() for x in nodes if x and x.strip()])
 
-def _scrape_google_search(query, max_results, log):
-    """Fallback: Google Search üzerinden patent linklerini al."""
-    results = []
-    search_url = f"https://www.google.com/search?q=site:patents.google.com+{quote_plus(query)}"
-    log(f"[FALLBACK] Google Search: {search_url}")
-    r = httpx.get(search_url, headers=UA, timeout=60)
-    sel = Selector(r.text)
-    links = [l for l in sel.css("a::attr(href)").getall() if "/patent/" in l]
-    seen = set()
-    for link in links:
-        if link in seen: 
-            continue
-        seen.add(link)
-        if not link.startswith("http"):
-            continue
-        log(f"[FALLBACK] Detail: {link}")
+def _parse_patent_detail(link, log):
+    """Detay sayfasından tüm alanları çıkarır"""
+    try:
         d = httpx.get(link, headers=UA, timeout=60)
+        if d.status_code != 200:
+            log(f"[WARN] Detail failed {d.status_code} for {link}")
+            return None
         ds = Selector(d.text)
-        results.append({
-            "title": _txts(ds.css("meta[name='DC.title']::attr(content)").getall()),
-            "abstract": _txts(ds.css("section#abstract ::text").getall()),
-            "patent_id": link.split("/patent/")[-1].split("/")[0],
+
+        title = _txts(ds.css("h1 ::text").getall())
+        full_abs = _txts(ds.css("section#abstract ::text").getall())
+        claims = _txts(ds.css("section#claims ::text").getall())
+        description = _txts(ds.css("#descriptionText ::text, section#description ::text").getall())
+        inventor = _txts(ds.xpath(
+            "//dl[contains(@class,'important-people')]"
+            "//dt[contains(translate(., 'INVETOR', 'invETOR'), 'inventor')]/following-sibling::dd//text()"
+        ).getall())
+        assignee = _txts(ds.xpath(
+            "//dl[contains(@class,'important-people')]"
+            "//dt[contains(translate(., 'ASSIGNE', 'assigne'), 'assignee')]/following-sibling::dd//text()"
+        ).getall())
+        classification = _txts(ds.css("classification-viewer ::text").getall())
+
+        # citations
+        cits = []
+        rows = ds.css("div.responsive-table div.tr")
+        for row in rows:
+            cols = [t.strip() for t in row.css("span.td ::text").getall() if t.strip()]
+            if cols:
+                cits.append(" | ".join(cols))
+        citations = "\n".join(cits)
+
+        # timeline
+        timeline = []
+        evs = ds.css("div.application-timeline div.event")
+        for ev in evs:
+            date = _txts(ev.css("div[date] ::text").getall())
+            tt = _txts(ev.css("div.flex.title ::text").getall())
+            if date or tt:
+                timeline.append(f"{date} — {tt}")
+        date_published = "; ".join(timeline)
+
+        m = re.search(r"/patent/([A-Z]{2}\d+[A-Z0-9]*)", link)
+        patent_id = m.group(1) if m else ""
+
+        return {
+            "title": title,
+            "abstract": full_abs,
+            "patent_id": patent_id,
             "link": link,
-            "claims": _txts(ds.css("section#claims ::text").getall()),
-            "description": _txts(ds.css("#descriptionText ::text, section#description ::text").getall()),
-            "inventor": _txts(ds.xpath("//dt[contains(.,'Inventor')]/following-sibling::dd[1]//text()").getall()),
-            "assignee": _txts(ds.xpath("//dt[contains(.,'Assignee')]/following-sibling::dd[1]//text()").getall()),
-            "classification": _txts(ds.css("classification-viewer ::text").getall()),
-            "citations": "\n".join([
-                " | ".join([t.strip() for t in row.css("span.td ::text").getall() if t.strip()])
-                for row in ds.css("div.responsive-table div.tr")
-            ]),
-            "date_published": "; ".join([
-                f"{_txts(ev.css('div[date] ::text').getall())} — {_txts(ev.css('div.flex.title ::text').getall())}"
-                for ev in ds.css("div.application-timeline div.event")
-            ])
-        })
-        if len(results) >= max_results:
-            break
-        time.sleep(1)
-    return results
+            "claims": claims,
+            "description": description,
+            "inventor": inventor,
+            "assignee": assignee,
+            "classification": classification,
+            "citations": citations,
+            "date_published": date_published,
+        }
+    except Exception as e:
+        log(f"[ERROR] detail parse fail {e}")
+        return None
 
 def run_google_patents_scraper(query, max_results=5):
     log_rows = []
@@ -110,68 +128,45 @@ def run_google_patents_scraper(query, max_results=5):
         log_rows.append({"event": msg})
 
     results = []
-    try:
-        search_url = f"https://patents.google.com/?q=({quote_plus(query)})&oq={quote_plus(query)}+"
-        log(f"[HTTP] Search: {search_url}")
-        r = httpx.get(search_url, headers=UA, timeout=60)
-        sel = Selector(r.text)
-        articles = sel.css("article.result.style-scope.search-result-item")
-        log(f"[HTTP] Found {len(articles)} articles")
 
-        if len(articles) == 0:
-            log("[WARN] No articles found on patents.google.com, using fallback.")
-            return _scrape_google_search(query, max_results, log)
+    # === 1. Normal Google Patents search ===
+    search_url = f"https://patents.google.com/?q=({quote_plus(query)})&oq={quote_plus(query)}+"
+    log(f"[HTTP] Search: {search_url}")
+    r = httpx.get(search_url, headers=UA, timeout=60)
+    sel = Selector(r.text)
 
-        for a in articles[:max_results]:
-            href = a.css("a#link::attr(href)").get("") or ""
-            title = (a.css("a#link::text").get("") or "").strip()
-            abstract = (a.css("div.abstract::text").get("") or "").strip()
-            link = urljoin("https://patents.google.com", href) if href.startswith("/") else href
-            m = re.search(r"/patent/([A-Z]{2}\d+[A-Z0-9]*)", link or "")
-            patent_id = m.group(1) if m else ""
-            if not link:
-                continue
+    articles = sel.css("article.result.style-scope.search-result-item")
+    log(f"[HTTP] Found {len(articles)} articles")
 
-            log(f"[HTTP] Detail: {link}")
-            d = httpx.get(link, headers=UA, timeout=60)
-            ds = Selector(d.text)
+    links = []
+    for a in articles[:max_results]:
+        href = a.css("a#link::attr(href)").get("") or ""
+        if href.startswith("/"):
+            href = urljoin("https://patents.google.com", href)
+        if "/patent/" in href:
+            links.append(href)
 
-            full_abs = _txts(ds.css("section#abstract ::text").getall()) or abstract
-            claims = _txts(ds.css("section#claims ::text").getall())
-            description = _txts(ds.css("#descriptionText ::text, section#description ::text").getall())
-            inventor = _txts(ds.xpath("//dt[contains(.,'Inventor')]/following-sibling::dd[1]//text()").getall())
-            assignee = _txts(ds.xpath("//dt[contains(.,'Assignee')]/following-sibling::dd[1]//text()").getall())
-            classification = _txts(ds.css("classification-viewer ::text").getall())
-            cits = []
-            for row in ds.css("div.responsive-table div.tr"):
-                cols = [t.strip() for t in row.css("span.td ::text").getall() if t.strip()]
-                if cols: cits.append(" | ".join(cols))
-            citations = "\n".join(cits)
-            timeline = []
-            for ev in ds.css("div.application-timeline div.event"):
-                date = _txts(ev.css("div[date] ::text").getall())
-                tt = _txts(ev.css("div.flex.title ::text").getall())
-                if date or tt: timeline.append(f"{date} — {tt}")
-            date_published = "; ".join(timeline)
+    # === 2. Fallback: Google Search ===
+    if not links:
+        gs_url = f"https://www.google.com/search?q=site:patents.google.com+{quote_plus(query)}"
+        log(f"[FALLBACK] Google Search: {gs_url}")
+        gs = httpx.get(gs_url, headers=UA | {"Accept": "text/html"}, timeout=60, follow_redirects=True)
+        sel = Selector(gs.text)
+        raw_links = sel.css("a::attr(href)").getall()
+        links = [l for l in raw_links if "/patent/" in l]
+        log(f"[FALLBACK] Found {len(links)} patent links")
 
-            results.append({
-                "title": title,
-                "abstract": full_abs,
-                "patent_id": patent_id,
-                "link": link,
-                "claims": claims,
-                "description": description,
-                "inventor": inventor,
-                "assignee": assignee,
-                "classification": classification,
-                "citations": citations,
-                "date_published": date_published,
-            })
-            time.sleep(0.6)
+    # === 3. Patent details ===
+    for link in links[:max_results]:
+        log(f"[HTTP] Detail: {link}")
+        item = _parse_patent_detail(link, log)
+        if item:
+            results.append(item)
+        time.sleep(0.6)
 
-    finally:
-        pd.DataFrame(log_rows).to_excel("patent_scraper_log.xlsx", index=False)
-        log("[INFO] Log file saved to patent_scraper_log.xlsx")
+    # Save log
+    pd.DataFrame(log_rows).to_excel("patent_scraper_log.xlsx", index=False)
+    log("[INFO] Log file saved to patent_scraper_log.xlsx")
 
     return results
 
