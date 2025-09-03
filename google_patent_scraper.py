@@ -80,7 +80,7 @@ def extract_patent_id(article, href, abstract):
 # patent scraped
 def run_google_patents_scraper(query, max_results=2):
     
-   log_rows = []
+    log_rows = []
     def log(msg):
         print(msg)
         log_rows.append({"event": msg})
