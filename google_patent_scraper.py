@@ -82,7 +82,7 @@ def extract_patent_id(article, href, abstract):
 
 # patent scraped
 def run_google_patents_scraper(query, max_results=2):
-    
+    results = []
     log_rows = []
     def log(msg):
         print(msg)
@@ -90,7 +90,7 @@ def run_google_patents_scraper(query, max_results=2):
 
     log("[INFO] Starting Google Patents scraper...")
 
-    # --- Selenium yoksa otomatik HTTP fallback ---
+    # --- 1) Selenium'ı dene; olmazsa HTTP fallback ---
     try:
         options = webdriver.ChromeOptions()
         options.add_argument("--headless=new")
@@ -100,20 +100,22 @@ def run_google_patents_scraper(query, max_results=2):
         options.add_argument("--lang=en-US,en;q=0.9")
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) "
                              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-        driver = webdriver.Chrome(options=options)  # burada patlarsa fallback olacak
+        driver = webdriver.Chrome(options=options)  # burada patlarsa except'e düşer
         wait = WebDriverWait(driver, 10)
     except Exception as boot_err:
-        log(f"[INFO] Selenium not available on this host -> switching to HTTP fallback. Reason: {boot_err}")
+        log(f"[INFO] Selenium not available on this host -> HTTP fallback. Reason: {boot_err}")
         results = _scrape_http_fallback(query, max_results, log)
+        # fallback temiz kapanış ve log kaydı
+        log(f"\n[INFO] Scraping finished (fallback), total results: {len(results)}")
         try:
             pd.DataFrame(log_rows).to_excel("patent_scraper_log.xlsx", index=False)
-        except Exception:
-            pass
+            log("[INFO] Log file saved to patent_scraper_log.xlsx")
+        except Exception as e:
+            log(f"[INFO] Skipping Excel log: {e}")
         return results
 
+    # --- 2) Selenium ile devam (senin mevcut akışın) ---
     try:
-        # 1. Open search page
-        from urllib.parse import quote_plus
         search_url = f"https://patents.google.com/?q={quote_plus(query)}"
         log(f"[INFO] Navigating to search URL: {search_url}")
         driver.get(search_url)
@@ -123,10 +125,9 @@ def run_google_patents_scraper(query, max_results=2):
         articles = driver.find_elements(By.CSS_SELECTOR, 'article.result.style-scope.search-result-item')
         log(f"[INFO] Found {len(articles)} articles on search results page.")
 
-                # -------- PASS 1: SEARCH PAGE SCRAPING --------
+        # -------- PASS 1: SEARCH PAGE SCRAPING --------
         search_results = []
         for article in articles[:max_results]:
-            # Title & Link
             try:
                 link_elem = article.find_element(By.CSS_SELECTOR, 'a#link')
                 href = link_elem.get_attribute("href") or ""
@@ -143,7 +144,6 @@ def run_google_patents_scraper(query, max_results=2):
                 title, detail_link = "", ""
                 log(f"[WARN] Could not extract title/link: {e}")
 
-            # Abstract
             try:
                 abstract_elem = article.find_element(By.CSS_SELECTOR, 'div.abstract')
                 abstract = abstract_elem.text.strip()
@@ -152,7 +152,6 @@ def run_google_patents_scraper(query, max_results=2):
                 abstract = ""
                 log(f"[WARN] Could not extract abstract: {e}")
 
-            # Universal Patent ID extraction
             patent_id = extract_patent_id(article, href, abstract)
             if patent_id:
                 detail_link = f"https://patents.google.com/patent/{patent_id}/en"
@@ -170,7 +169,6 @@ def run_google_patents_scraper(query, max_results=2):
             })
 
         # -------- PASS 2: DETAILS PAGE SCRAPING --------
-        results = []
         for res in search_results:
             link = res['link']
             claims = description = inventor = assignee = classification = citations = date_published = ""
@@ -180,7 +178,7 @@ def run_google_patents_scraper(query, max_results=2):
                 driver.get(link)
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
-                # === Full abstract from detail page ===
+                # === Full abstract ===
                 try:
                     full_abs_elem = driver.find_element(By.CSS_SELECTOR, "section#abstract")
                     full_abstract = full_abs_elem.text.strip()
@@ -190,67 +188,42 @@ def run_google_patents_scraper(query, max_results=2):
                 except Exception as e:
                     log(f"[WARN] Could not extract full abstract from detail page: {e}")
 
-
                 # === Claims ===
-                claims = ""
                 try:
+                    claims_section = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section#claims")))
                     try:
-                        claims_section = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section#claims")))
-                        try:
-                            patent_text_elem = claims_section.find_element(By.TAG_NAME, "patent-text")
-                            claims = patent_text_elem.text.strip()
-                            log(f"[DEBUG] Claims found (by section/patent-text): {len(claims)} chars")
-                        except Exception as e_tag:
-                            claims = claims_section.text.strip()
-                            log(f"[DEBUG] Claims found (by section): {len(claims)} chars")
-                    except Exception as e_sec:
-                        claims = ""
-                        log(f"[WARN] Could not extract claims by section selector: {e_sec}")
+                        patent_text_elem = claims_section.find_element(By.TAG_NAME, "patent-text")
+                        claims = patent_text_elem.text.strip()
+                    except Exception:
+                        claims = claims_section.text.strip()
+                    log(f"[DEBUG] Claims len: {len(claims)}")
                 except Exception as e:
-                    claims = ""
-                    log(f"[WARN] Could not extract claims at all: {e}")
+                    log(f"[WARN] Could not extract claims: {e}")
 
-                description = ""
+                # === Description ===
                 try:
-                    # Wait for either 'descriptionText' or 'section#description' to be present
-                    wait = WebDriverWait(driver, 10)
-                    # Wait for either element to be present (use whichever appears first)
                     try:
                         desc_elem = wait.until(EC.presence_of_element_located((By.ID, "descriptionText")))
                         description = desc_elem.text.strip()
-                        log(f"[DEBUG] Description found (by ID): {len(description)} chars")
-                    except Exception as e_id:
-                        log(f"[WARN] Could not extract description by ID: {e_id}")
+                    except Exception:
+                        desc_section = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section#description")))
                         try:
-                            desc_section = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section#description")))
-                            try:
-                                patent_text_elem = desc_section.find_element(By.TAG_NAME, "patent-text")
-                                description = patent_text_elem.text.strip()
-                                log(f"[DEBUG] Description found (by section/patent-text): {len(description)} chars")
-                            except Exception as e_tag:
-                                description = desc_section.text.strip()
-                                log(f"[DEBUG] Description found (by section): {len(description)} chars")
-                        except Exception as e_sec:
-                            description = ""
-                            log(f"[WARN] Could not extract description by section selector: {e_sec}")
+                            patent_text_elem = desc_section.find_element(By.TAG_NAME, "patent-text")
+                            description = patent_text_elem.text.strip()
+                        except Exception:
+                            description = desc_section.text.strip()
+                    log(f"[DEBUG] Description len: {len(description)}")
                 except Exception as e:
-                    description = ""
-                    log(f"[WARN] Could not extract description at all: {e}")
+                    log(f"[WARN] Could not extract description: {e}")
 
-               # Inventor & Assignee
+                # === Inventor / Assignee ===
                 try:
                     imp_dl = driver.find_element(By.CSS_SELECTOR, "dl.important-people.style-scope.patent-result")
                     children = imp_dl.find_elements(By.XPATH, "./*")
-
-                    inventor_list = []
-                    assignee = ""
-
-                    current_label = ""
-
+                    inventor_list, assignee, current_label = [], "", ""
                     for el in children:
                         tag = el.tag_name.lower()
                         text = el.text.strip()
-
                         if tag == "dt":
                             current_label = text.lower()
                         elif tag == "dd":
@@ -258,96 +231,53 @@ def run_google_patents_scraper(query, max_results=2):
                                 inventor_list.append(text)
                             elif "assignee" in current_label:
                                 assignee = text
-
                     inventor = ", ".join(inventor_list)
                     log(f"[DEBUG] Inventor: {inventor} | Assignee: {assignee}")
                 except Exception as e:
-                    inventor = ""
-                    assignee = ""
                     log(f"[WARN] Could not extract inventor/assignee: {e}")
 
-
-                classification = ""
-
+                # === Classification ===
                 try:
-                    # 1️⃣ View more classifications butonuna tıkla (varsa)
                     try:
                         more_button = driver.find_element(By.XPATH, "//div[contains(text(),'more classifications')]")
                         driver.execute_script("arguments[0].click();", more_button)
                         time.sleep(1)
-                        log("[DEBUG] Clicked 'View more classifications'")
-                    except Exception as e:
-                        log(f"[INFO] No 'View more classifications' button: {e}")
+                    except Exception:
+                        pass
 
-                    # 2️⃣ Yöntem 1: JS ile shadowRoot içeriğini almayı dene
                     js_script = """
                     const viewer = document.querySelector('classification-viewer');
-                    if (!viewer) return '[DEBUG] viewer not found';
-                    if (!viewer.shadowRoot) return '[DEBUG] shadowRoot not accessible';
-
+                    if (!viewer || !viewer.shadowRoot) return '';
                     const trees = viewer.shadowRoot.querySelectorAll('classification-tree');
-                    if (!trees.length) return '[DEBUG] No classification-tree found';
-
                     return Array.from(trees).map(e => e.textContent.trim()).filter(Boolean).join('\\n');
                     """
                     classification = driver.execute_script(js_script)
-                    #log(f"[DEBUG] JS classification result:\n{classification}")
-
-                    # Eğer shadowRoot erişimi başarısızsa fallback yap
-                    if "[DEBUG]" in classification or not classification.strip():
-                        raise Exception("JS-based extraction failed, trying outerHTML fallback...")
+                    if not classification.strip():
+                        raise Exception("shadowRoot extraction failed")
 
                 except Exception as e:
-                    log(f"[INFO] JS extraction failed: {e}")
-
-                    # 3️⃣ Yöntem 2: outerHTML ile DOM'dan çekip regex ile ayıkla
                     try:
                         outer_html = driver.execute_script("""
                             const el = document.querySelector('classification-viewer');
-                            return el ? el.outerHTML : '[viewer not found]';
+                            return el ? el.outerHTML : '';
                         """)
-                        log(f"[DEBUG] Outer HTML fetched.")
-
                         matches = re.findall(r'<classification-tree[^>]*>(.*?)</classification-tree>', outer_html, re.DOTALL)
                         classification_list = [re.sub('<[^<]+?>', '', m).strip() for m in matches if m.strip()]
-                        classification = "\n".join(classification_list)
-
-                        # ✅ Buraya kod-parçala-ve-listele kısmı
-                        rows = []
-                        buffer_code = None
-
+                        rows, buffer_code = [], None
                         for line in classification_list:
-                            line = re.sub(r'\s+', ' ', line).replace('\xa0', ' ').strip()
-                            # Kod formatında mı?
+                            line = re.sub(r'\s+', ' ', line).replace('\xa0',' ').strip()
                             if re.match(r'^[A-Z]{1,4}[0-9]{0,4}[A-Z]?[0-9]{0,4}/?[0-9]*$', line):
                                 buffer_code = line
                             elif buffer_code and line and not re.match(r'^[A-Z]{1,10}$', line):
-                                # Koddan sonra gelen açıklamayı eşleştir
-                                rows.append((buffer_code, line))
-                                buffer_code = None  # sıfırla
+                                rows.append((buffer_code, line)); buffer_code = None
                             else:
-                                buffer_code = None  # eşleşmediyse geç
-
-                        # Logla
-                        for i, (code, desc) in enumerate(rows, 1):
-                            log(f"[CLASS {i}] {code} — {desc}")
-                        # ✅ BURASI EKLENSİN
-                        if rows:
-                            classification = "\n".join([f"{code} — {desc}" for code, desc in rows])
-
-                    except Exception as e:
-                        log(f"[ERROR] Could not extract classification from outerHTML: {e}")
+                                buffer_code = None
+                        classification = "\n".join([f"{c} — {d}" for c,d in rows]) if rows else ""
+                    except Exception as e2:
+                        log(f"[WARN] Classification fallback failed: {e2}")
                         classification = ""
 
-                # 🎯 Sonuç
-               # if classification:
-                #    log(f"[RESULT] Final classification result:\n{classification}")
-                #else:
-                 #   log("[WARN] No classification data could be extracted.")
-  
-
-
-                # Citations
+                # === Citations ===
                 try:
                     citations_div = driver.find_element(By.CSS_SELECTOR, 'div.responsive-table.style-scope.patent-result')
                     citation_rows = citations_div.find_elements(By.CSS_SELECTOR, "div.tr.style-scope.patent-result")
@@ -358,13 +288,11 @@ def run_google_patents_scraper(query, max_results=2):
                         if text:
                             citations_list.append(text)
                     citations = "\n".join(citations_list)
-                    log(f"[DEBUG] Citations found: {len(citations_list)} items")
                 except Exception as e:
                     citations = ""
                     log(f"[WARN] Could not extract citations: {e}")
-                    
 
-                # === Date Published (all timeline events as single string) ===
+                # === Timeline ===
                 try:
                     event_divs = driver.find_elements(By.CSS_SELECTOR, "div.event.layout.horizontal.style-scope.application-timeline")
                     timeline_items = []
@@ -381,9 +309,7 @@ def run_google_patents_scraper(query, max_results=2):
                             pass
                         if date_text or title_text:
                             timeline_items.append(f"{date_text} — {title_text}")
-
-                    date_published = "; ".join(timeline_items)  # tek string halinde
-                    log(f"[DEBUG] Date Published (timeline): {len(timeline_items)} events")
+                    date_published = "; ".join(timeline_items)
                 except Exception as e:
                     date_published = ""
                     log(f"[WARN] Could not extract timeline events: {e}")
@@ -391,7 +317,6 @@ def run_google_patents_scraper(query, max_results=2):
             except Exception as e:
                 log(f"[WARN] Failed to extract details from {link}: {e}")
 
-            # Merge all fields for final output
             out = res.copy()
             out.update({
                 "claims": claims,
@@ -406,11 +331,18 @@ def run_google_patents_scraper(query, max_results=2):
 
     finally:
         log(f"\n[INFO] Scraping finished, total results: {len(results)}")
-        log_file = "patent_scraper_log.xlsx"
-        pd.DataFrame(log_rows).to_excel(log_file, index=False)
-        log(f"[INFO] Log file saved to {log_file}")
-        driver.quit()
+        try:
+            pd.DataFrame(log_rows).to_excel("patent_scraper_log.xlsx", index=False)
+            log("[INFO] Log file saved to patent_scraper_log.xlsx")
+        except Exception as e:
+            log(f"[INFO] Skipping Excel log: {e}")
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
     return results
+
 
 UA = {
     "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
