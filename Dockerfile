@@ -1,39 +1,69 @@
-log_rows = []
-def log(msg):
-    print(msg)
-    log_rows.append({"event": msg})
+# ✅ Python 3.11 slim image
+FROM python:3.11-slim
 
-log("[INFO] Starting Google Patents scraper...")
+# ========================
+# 1. Sistem bağımlılıkları
+# ========================
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    unzip \
+    gnupg \
+    fonts-liberation \
+    libnss3 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxi6 \
+    libxtst6 \
+    libglib2.0-0 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libasound2 \
+    libxrandr2 \
+    libatk1.0-0 \
+    libcups2 \
+    && rm -rf /var/lib/apt/lists/*
 
-options = webdriver.ChromeOptions()
-options.add_argument("--headless=new")
-options.add_argument("--no-sandbox")
-options.add_argument("--disable-dev-shm-usage")
-options.add_argument("--disable-gpu")
-options.add_argument("--disable-software-rasterizer")
+# ========================
+# 2. Google Chrome yükle
+# ========================
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+    > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y google-chrome-stable
 
-# Chromium yolu (Debian'da /usr/bin/chromium)
-chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
-if os.path.exists(chrome_bin):
-    options.binary_location = chrome_bin
-else:
-    log(f"[WARN] Chrome binary not found at {chrome_bin}; letting Selenium Manager try.")
+# ========================
+# 3. ChromeDriver yükle (Chrome versiyonuna uygun)
+# ========================
+RUN CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f3 | cut -d '.' -f1) && \
+    DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
+    wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${DRIVER_VERSION}/chromedriver_linux64.zip" && \
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip
 
-# Chromedriver yolu (symlink /usr/bin/chromedriver -> /usr/lib/chromium/chromedriver)
-driver_path = os.getenv("CHROMEDRIVER", "/usr/bin/chromedriver")
+# ========================
+# 4. Ortam ayarları
+# ========================
+ENV DISPLAY=:99
 
-driver = None
-try:
-    if os.path.exists(driver_path):
-        log(f"[INFO] Using chromedriver at {driver_path}")
-        service = Service(executable_path=driver_path)
-        driver = webdriver.Chrome(service=service, options=options)
-    else:
-        log(f"[WARN] Chromedriver not found at {driver_path}; using Selenium Manager fallback.")
-        driver = webdriver.Chrome(options=options)  # fallback
-except Exception as e:
-    log(f"[ERROR] Failed to start Chrome with explicit path: {e}")
-    # Son bir kez daha Selenium Manager'a bırak (bazı ortamlarda ilk deneme patlayabiliyor)
-    driver = webdriver.Chrome(options=options)
+# ========================
+# 5. Python bağımlılıkları
+# ========================
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install openpyxl  # ✅ pandas.to_excel için gerekli
 
-wait = WebDriverWait(driver, 10)
+# ========================
+# 6. Kodları kopyala
+# ========================
+COPY . /app
+WORKDIR /app
+
+# ========================
+# 7. Başlatma komutu
+# ========================
+CMD ["uvicorn", "google_patent_scraper:app", "--host", "0.0.0.0", "--port", "8000"]
