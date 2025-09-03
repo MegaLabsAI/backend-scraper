@@ -16,6 +16,7 @@ import logging
 import time
 import re
 from selenium.webdriver.chrome.service import Service
+import os
 
 
 app = FastAPI()
