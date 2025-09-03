@@ -16,7 +16,6 @@ import logging
 import time
 import re
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 import os
 
 
@@ -89,16 +88,16 @@ def run_google_patents_scraper(query, max_results=2):
     log("[INFO] Starting Google Patents scraper...")
     from selenium.webdriver.chrome.service import Service
 
-    options = webdriver.ChromeOptions()
-    options.binary_location = "/usr/bin/google-chrome"   # ✅ doğru yol
+    options.binary_location = os.getenv("CHROME_BIN", "/usr/bin/chromium")  # ✅ Chromium yolu
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--disable-software-rasterizer")
     options.add_argument("--remote-debugging-port=9222")
+    options.add_argument("--window-size=1920,1080")
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    service = Service(os.getenv("CHROMEDRIVER", "/usr/bin/chromedriver"))  # ✅ chromedriver yolu
+    driver = webdriver.Chrome(service=service, options=options)
     wait = WebDriverWait(driver, 10)
 
     try:
