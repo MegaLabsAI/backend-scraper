@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libatk1.0-0 \
     libcups2 \
+    chromium-driver \   # ✅ Bunu ekledik
     && rm -rf /var/lib/apt/lists/*
 
 # ========================
@@ -37,18 +38,22 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add
     > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update && apt-get install -y google-chrome-stable
 
+# (Opsiyonel) Eğer yukarıdaki ChromeDriver indirmen kalsın dersen bırakabilirsin,
+# ama chromium-driver zaten eklediğimiz için garanti olur. İstersen bu kısmı silebilirsin.
 # ========================
-# 3. ChromeDriver yükle (Chrome versiyonuna uygun)
+# 3. ChromeDriver (ekstra güvence için)
 # ========================
 RUN CHROME_VERSION=$(google-chrome --version | cut -d ' ' -f3 | cut -d '.' -f1) && \
     DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
     wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${DRIVER_VERSION}/chromedriver_linux64.zip" && \
-    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip || true
 
 # ========================
 # 4. Ortam ayarları
 # ========================
 ENV DISPLAY=:99
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver   # ✅ chromium-driver ile garanti path
 
 # ========================
 # 5. Python bağımlılıkları
@@ -67,7 +72,3 @@ WORKDIR /app
 # 7. Başlatma komutu
 # ========================
 CMD ["uvicorn", "google_patent_scraper:app", "--host", "0.0.0.0", "--port", "8000"]
-
-# Chrome ve Selenium için zorunlu flagler
-ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver

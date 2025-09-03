@@ -86,6 +86,8 @@ def run_google_patents_scraper(query, max_results=2):
 
     log("[INFO] Starting Google Patents scraper...")
     options = webdriver.ChromeOptions()
+    options.binary_location = "/usr/bin/google-chrome"  # ✅ Chrome’un yolu garanti olsun
+    chrome_service = Service("/usr/bin/chromedriver") 
     options.add_argument("--headless=new")   # ✅ yeni headless
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
