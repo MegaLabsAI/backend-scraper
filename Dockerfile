@@ -1,26 +1,39 @@
-# ===== Base =====
-FROM python:3.11-slim
+log_rows = []
+def log(msg):
+    print(msg)
+    log_rows.append({"event": msg})
 
-# Sistem bağımlılıkları + Chromium + chromedriver
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium chromium-driver \
-    fonts-liberation libnss3 libxss1 libasound2 libatk1.0-0 libcups2 \
-    libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libxdamage1 libxrandr2 \
-    libxcomposite1 libxfixes3 libxkbcommon0 libxext6 libx11-xcb1 libxi6 \
-    curl unzip gnupg wget \
- && rm -rf /var/lib/apt/lists/*
+log("[INFO] Starting Google Patents scraper...")
 
-# Ortam değişkenleri: Debian/Chromium yolları
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER=/usr/bin/chromedriver
+options = webdriver.ChromeOptions()
+options.add_argument("--headless=new")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
+options.add_argument("--disable-gpu")
+options.add_argument("--disable-software-rasterizer")
 
-# Python bağımlılıkları
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && pip install openpyxl
+# Chromium yolu (Debian'da /usr/bin/chromium)
+chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
+if os.path.exists(chrome_bin):
+    options.binary_location = chrome_bin
+else:
+    log(f"[WARN] Chrome binary not found at {chrome_bin}; letting Selenium Manager try.")
 
-# Kod
-COPY . /app
-WORKDIR /app
+# Chromedriver yolu (symlink /usr/bin/chromedriver -> /usr/lib/chromium/chromedriver)
+driver_path = os.getenv("CHROMEDRIVER", "/usr/bin/chromedriver")
 
-# Uygulama
-CMD ["uvicorn", "google_patent_scraper:app", "--host", "0.0.0.0", "--port", "8000"]
+driver = None
+try:
+    if os.path.exists(driver_path):
+        log(f"[INFO] Using chromedriver at {driver_path}")
+        service = Service(executable_path=driver_path)
+        driver = webdriver.Chrome(service=service, options=options)
+    else:
+        log(f"[WARN] Chromedriver not found at {driver_path}; using Selenium Manager fallback.")
+        driver = webdriver.Chrome(options=options)  # fallback
+except Exception as e:
+    log(f"[ERROR] Failed to start Chrome with explicit path: {e}")
+    # Son bir kez daha Selenium Manager'a bırak (bazı ortamlarda ilk deneme patlayabiliyor)
+    driver = webdriver.Chrome(options=options)
+
+wait = WebDriverWait(driver, 10)
