@@ -18,6 +18,9 @@ import re
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 import os
+import httpx
+from parsel import Selector
+from urllib.parse import quote_plus, urljoin
 
 
 app = FastAPI()
@@ -87,21 +90,26 @@ def run_google_patents_scraper(query, max_results=2):
 
     log("[INFO] Starting Google Patents scraper...")
 
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-software-rasterizer")
-
-    chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
-    if os.path.exists(chrome_bin):
-        options.binary_location = chrome_bin
-
-    service = Service(os.getenv("CHROMEDRIVER", "/usr/bin/chromedriver"))
-    driver = webdriver.Chrome(service=service, options=options)
-
-    wait = WebDriverWait(driver, 10)
+    # --- Selenium yoksa otomatik HTTP fallback ---
+    try:
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1366,2400")
+        options.add_argument("--lang=en-US,en;q=0.9")
+        options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) "
+                             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+        driver = webdriver.Chrome(options=options)  # burada patlarsa fallback olacak
+        wait = WebDriverWait(driver, 10)
+    except Exception as boot_err:
+        log(f"[INFO] Selenium not available on this host -> switching to HTTP fallback. Reason: {boot_err}")
+        results = _scrape_http_fallback(query, max_results, log)
+        try:
+            pd.DataFrame(log_rows).to_excel("patent_scraper_log.xlsx", index=False)
+        except Exception:
+            pass
+        return results
 
     try:
         # 1. Open search page
@@ -403,6 +411,87 @@ def run_google_patents_scraper(query, max_results=2):
         log(f"[INFO] Log file saved to {log_file}")
         driver.quit()
     return results
+
+UA = {
+    "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                   "KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+def _txts(nodes):
+    return " ".join([re.sub(r"\s+", " ", x).strip() for x in nodes if x and x.strip()])
+
+def _scrape_http_fallback(query, max_results, log):
+    results = []
+    try:
+        search_url = f"https://patents.google.com/?q={quote_plus(query)}"
+        log(f"[FALLBACK] HTTP GET {search_url}")
+        r = httpx.get(search_url, headers=UA, timeout=30)
+        if r.status_code != 200:
+            log(f"[FALLBACK][ERROR] search status {r.status_code}")
+            return []
+        sel = Selector(r.text)
+        articles = sel.css('article.result.style-scope.search-result-item')
+        log(f"[FALLBACK] Found {len(articles)} results")
+        for a in articles[:max_results]:
+            href = a.css("a#link::attr(href)").get("") or ""
+            title = (a.css("a#link::text").get("") or "").strip()
+            abstract = (a.css("div.abstract::text").get("") or "").strip()
+            link = urljoin("https://patents.google.com", href) if href.startswith("/") else href
+            m = re.search(r'/patent/([A-Z]{2}\d+[A-Z0-9]*)', link or "")
+            patent_id = m.group(1) if m else ""
+            if not link:
+                continue
+            log(f"[FALLBACK] HTTP GET {link}")
+            d = httpx.get(link, headers=UA, timeout=30)
+            if d.status_code != 200:
+                log(f"[FALLBACK][WARN] detail status {d.status_code} for {link}")
+                continue
+            ds = Selector(d.text)
+            full_abs = _txts(ds.css("section#abstract ::text").getall())
+            if full_abs: abstract = full_abs
+            claims = _txts(ds.css("section#claims ::text").getall())
+            description = _txts(ds.css("#descriptionText ::text, section#description ::text").getall())
+            inventor = _txts(ds.xpath(
+                "//dl[contains(@class,'important-people')]"
+                "//dt[contains(translate(., 'INVETOR', 'invETOR'), 'inventor')]/following-sibling::dd[1]//text()"
+            ).getall())
+            assignee = _txts(ds.xpath(
+                "//dl[contains(@class,'important-people')]"
+                "//dt[contains(translate(., 'ASSIGNE', 'assigne'), 'assignee')]/following-sibling::dd[1]//text()"
+            ).getall())
+            classification = _txts(ds.css("classification-viewer ::text").getall())
+            rows = ds.css("div.responsive-table div.tr")
+            cits = []
+            for row in rows:
+                cols = [t.strip() for t in row.css("span.td ::text").getall() if t.strip()]
+                if cols: cits.append(" | ".join(cols))
+            citations = "\n".join(cits)
+            evs = ds.css("div.application-timeline div.event")
+            timeline = []
+            for ev in evs:
+                date = _txts(ev.css("div[date] ::text").getall())
+                tt = _txts(ev.css("div.flex.title ::text").getall())
+                if date or tt: timeline.append(f"{date} — {tt}")
+            date_published = "; ".join(timeline)
+            results.append({
+                "title": title,
+                "abstract": abstract,
+                "patent_id": patent_id,
+                "link": link,
+                "claims": claims,
+                "description": description,
+                "inventor": inventor,
+                "assignee": assignee,
+                "classification": classification,
+                "citations": citations,
+                "date_published": date_published,
+            })
+            time.sleep(0.6)
+    except Exception as e:
+        log(f"[FALLBACK][ERROR] {e}")
+    return results
+
 
 
 @app.post("/get_patents_detailed", response_model=PatentDetailedResponse)
