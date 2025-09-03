@@ -38,40 +38,27 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add
     && apt-get update && apt-get install -y google-chrome-stable
 
 # ========================
-# 3. ChromeDriver yükle (Chrome versiyonuna uygun)
-# ========================
-RUN CHROME_VERSION=$(google-chrome-stable --version | cut -d ' ' -f3 | cut -d '.' -f1) && \
-    DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
-    wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${DRIVER_VERSION}/chromedriver_linux64.zip" && \
-    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && rm /tmp/chromedriver.zip
-
-# ========================
-# 4. Symlink fix (Chrome + Chromedriver)
-# ========================
-RUN ln -s /usr/bin/google-chrome-stable /usr/bin/google-chrome \
-    && ln -s /usr/local/bin/chromedriver /usr/bin/chromedriver
-
-# ========================
-# 5. Ortam ayarları
+# 3. Ortam ayarları
 # ========================
 ENV DISPLAY=:99
-ENV CHROME_BIN=/usr/bin/google-chrome-stable
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 
 # ========================
-# 6. Python bağımlılıkları
+# 4. Python bağımlılıkları
 # ========================
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install openpyxl
+    && pip install openpyxl  # ✅ pandas.to_excel için gerekli
 
 # ========================
-# 7. Kodları kopyala
+# 5. Kodları kopyala
 # ========================
 COPY . /app
 WORKDIR /app
 
 # ========================
-# 8. Başlatma komutu
+# 6. Başlatma komutu
 # ========================
 CMD ["uvicorn", "google_patent_scraper:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ✅ Chrome için env
+ENV CHROME_BIN=/usr/bin/google-chrome-stable

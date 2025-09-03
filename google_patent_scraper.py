@@ -16,6 +16,7 @@ import logging
 import time
 import re
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 import os
 
 
@@ -97,8 +98,7 @@ def run_google_patents_scraper(query, max_results=2):
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--remote-debugging-port=9222")
 
-    chrome_service = Service(os.getenv("CHROMEDRIVER_PATH", "/usr/local/bin/chromedriver"))
-    driver = webdriver.Chrome(service=chrome_service, options=options)
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     wait = WebDriverWait(driver, 10)
 
     try:
