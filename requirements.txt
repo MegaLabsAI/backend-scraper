@@ -9,3 +9,4 @@ scikit-learn
 openai
 selenium
 webdriver-manager
+openpyxl
