@@ -69,7 +69,7 @@ def run_google_patents_scraper(query, max_results=5):
 
     results = []
     try:
-        search_url = f"https://patents.google.com/?q={quote_plus(query)}"
+        search_url = f"https://patents.google.com/?q={quote_plus(query)}&tbm=pts"
         log(f"[HTTP] Search: {search_url}")
         r = httpx.get(search_url, headers=UA, timeout=60)
         if r.status_code != 200:
